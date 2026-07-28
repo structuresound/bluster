@@ -1,5 +1,5 @@
 use dbus::{
-    arg::{RefArg, Variant},
+    arg::Variant,
     channel::Sender,
     nonblock::stdintf::org_freedesktop_dbus::PropertiesPropertiesChanged,
     Message, Path,
@@ -19,10 +19,10 @@ use super::{
         Connection,
     },
     flags::Flags,
+    options,
+    options::OptionsMap,
 };
 use crate::{gatt, Error};
-
-type OptionsMap = HashMap<String, Variant<Box<dyn RefArg>>>;
 
 #[derive(Debug, Clone)]
 pub struct Characteristic {
@@ -76,8 +76,9 @@ impl Characteristic {
                 ("options",),
                 ("value",),
                 |mut ctx, cr, (options,): (OptionsMap,)| {
-                    let offset = options.get("offset").and_then(RefArg::as_u64).unwrap_or(0) as u16;
-                    let mtu = options.get("mtu").and_then(RefArg::as_u64).unwrap_or(23) as u16;
+                    let offset = options::u16_opt(&options, "offset", 0);
+                    let mtu = options::u16_opt(&options, "mtu", 23);
+                    let peer = options::peer(&options);
 
                     let characteristic = cr
                         .data_mut::<GattDataType>(ctx.path())
@@ -96,16 +97,15 @@ impl Characteristic {
                                 offset,
                                 response: sender,
                                 mtu,
+                                peer,
                             }))
                             .await
                             .map_err(|_| MethodErr::from((BLUEZ_ERROR_FAILED, "")))?;
                         receiver
                             .await
                             .map_err(|_| MethodErr::from((BLUEZ_ERROR_FAILED, "")))
-                            .and_then(|resp| match resp {
-                                gatt::event::Response::Success(value) => Ok((value,)),
-                                _ => Err(MethodErr::from((BLUEZ_ERROR_FAILED, ""))),
-                            })
+                            .and_then(options::into_reply)
+                            .map(|value| (value,))
                     }
                     .map(move |result| ctx.reply(result))
                 },
@@ -115,7 +115,8 @@ impl Characteristic {
                 ("data", "options"),
                 ("value",),
                 |mut ctx, cr, (data, options): (Vec<u8>, OptionsMap)| {
-                    let offset = options.get("offset").and_then(RefArg::as_u64).unwrap_or(0) as u16;
+                    let offset = options::u16_opt(&options, "offset", 0);
+                    let peer = options::peer(&options);
                     let characteristic = cr
                         .data_mut::<GattDataType>(ctx.path())
                         .unwrap()
@@ -135,6 +136,7 @@ impl Characteristic {
                                     offset,
                                     without_response: false,
                                     response: sender,
+                                    peer,
                                 },
                             ))
                             .await
@@ -142,10 +144,8 @@ impl Characteristic {
                         receiver
                             .await
                             .map_err(|_| MethodErr::from((BLUEZ_ERROR_FAILED, "")))
-                            .and_then(|resp| match resp {
-                                gatt::event::Response::Success(value) => Ok((value,)),
-                                _ => Err(MethodErr::from((BLUEZ_ERROR_FAILED, ""))),
-                            })
+                            .and_then(options::into_reply)
+                            .map(|value| (value,))
                     }
                     .map(move |result| ctx.reply(result))
                 },

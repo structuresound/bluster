@@ -2,6 +2,7 @@ mod application;
 mod characteristic;
 mod descriptor;
 mod flags;
+mod options;
 mod service;
 
 use dbus::{channel::MatchingReceiver, message::MatchRule, Path};

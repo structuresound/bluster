@@ -1,10 +1,7 @@
-use dbus::{
-    arg::{RefArg, Variant},
-    Path,
-};
+use dbus::Path;
 use dbus_crossroads::MethodErr;
 use futures::{channel::oneshot, prelude::*};
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use super::{
     super::{
@@ -13,10 +10,10 @@ use super::{
         constants::{BLUEZ_ERROR_FAILED, BLUEZ_ERROR_NOTSUPPORTED, GATT_DESCRIPTOR_IFACE},
     },
     flags::Flags,
+    options,
+    options::OptionsMap,
 };
 use crate::{gatt, Error};
-
-type OptionsMap = HashMap<String, Variant<Box<dyn RefArg>>>;
 
 #[derive(Debug, Clone)]
 pub struct Descriptor {
@@ -37,8 +34,9 @@ impl Descriptor {
                 ("options",),
                 ("value",),
                 |mut ctx, cr, (options,): (OptionsMap,)| {
-                    let offset = options.get("offset").and_then(RefArg::as_u64).unwrap_or(0) as u16;
-                    let mtu = options.get("mtu").and_then(RefArg::as_u64).unwrap_or(23) as u16;
+                    let offset = options::u16_opt(&options, "offset", 0);
+                    let mtu = options::u16_opt(&options, "mtu", 23);
+                    let peer = options::peer(&options);
                     let descriptor = cr
                         .data_mut::<GattDataType>(ctx.path())
                         .unwrap()
@@ -56,16 +54,15 @@ impl Descriptor {
                                 offset,
                                 response: sender,
                                 mtu,
+                                peer,
                             }))
                             .await
                             .map_err(|_| MethodErr::from((BLUEZ_ERROR_FAILED, "")))?;
                         receiver
                             .await
                             .map_err(|_| MethodErr::from((BLUEZ_ERROR_FAILED, "")))
-                            .and_then(|resp| match resp {
-                                gatt::event::Response::Success(value) => Ok((value,)),
-                                _ => Err(MethodErr::from((BLUEZ_ERROR_FAILED, ""))),
-                            })
+                            .and_then(options::into_reply)
+                            .map(|value| (value,))
                     }
                     .map(move |result| ctx.reply(result))
                 },
@@ -75,7 +72,8 @@ impl Descriptor {
                 ("data", "options"),
                 ("value",),
                 |mut ctx, cr, (data, options): (Vec<u8>, OptionsMap)| {
-                    let offset = options.get("offset").and_then(RefArg::as_u64).unwrap_or(0) as u16;
+                    let offset = options::u16_opt(&options, "offset", 0);
+                    let peer = options::peer(&options);
                     let descriptor = cr
                         .data_mut::<GattDataType>(ctx.path())
                         .unwrap()
@@ -95,6 +93,7 @@ impl Descriptor {
                                     offset,
                                     without_response: false,
                                     response: sender,
+                                    peer,
                                 },
                             ))
                             .await
@@ -102,10 +101,8 @@ impl Descriptor {
                         receiver
                             .await
                             .map_err(|_| MethodErr::from((BLUEZ_ERROR_FAILED, "")))
-                            .and_then(|resp| match resp {
-                                gatt::event::Response::Success(value) => Ok((value,)),
-                                _ => Err(MethodErr::from((BLUEZ_ERROR_FAILED, ""))),
-                            })
+                            .and_then(options::into_reply)
+                            .map(|value| (value,))
                     }
                     .map(move |result| ctx.reply(result))
                 },
